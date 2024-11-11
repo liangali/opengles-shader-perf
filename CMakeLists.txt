@@ -32,6 +32,7 @@ link_directories(${ANGLE_DIR}/lib)
 
 add_executable(shader_perf_test 
     main.cpp
+    texture_utils.cpp
 )
 
 target_link_libraries(shader_perf_test

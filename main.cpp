@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <windows.h>
 #include "shaders.h"
+#include "texture_utils.h"
 
 // Performance test parameters
 const int TEST_ITERATIONS = 100;
@@ -293,6 +294,26 @@ int main() {
 
     initGeometryAndTextures();
 
+    // 创建并初始化NV12纹理时使用测试pattern
+    uint8_t* nv12_data = new uint8_t[WIDTH * HEIGHT * 3 / 2];
+    uint8_t* y_plane = nv12_data;
+    uint8_t* uv_plane = nv12_data + (WIDTH * HEIGHT);
+    
+    FillNV12TestPattern(y_plane, uv_plane, WIDTH, HEIGHT);
+
+    // 创建NV12纹理并上传数据
+    glGenTextures(1, &yTexture);
+    glBindTexture(GL_TEXTURE_2D, yTexture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, WIDTH, HEIGHT, 0, GL_RED, GL_UNSIGNED_BYTE, y_plane);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    glGenTextures(1, &uvTexture);
+    glBindTexture(GL_TEXTURE_2D, uvTexture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RG8, WIDTH/2, HEIGHT/2, 0, GL_RG, GL_UNSIGNED_BYTE, uv_plane);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
     // Run performance test
     PerfResult result = runPerfTest();
 
@@ -301,6 +322,18 @@ int main() {
     std::cout << "Average Time: " << result.avgTime << " ms" << std::endl;
     std::cout << "Minimum Time: " << result.minTime << " ms" << std::endl;
     std::cout << "Maximum Time: " << result.maxTime << " ms" << std::endl;
+
+    // 读取RGB结果
+    uint8_t* rgb_data = new uint8_t[WIDTH * HEIGHT * 3];
+    // 从GPU读取数据到rgb_data
+    glReadPixels(0, 0, WIDTH, HEIGHT, GL_RGB, GL_UNSIGNED_BYTE, rgb_data);
+
+    // 保存为BMP文件
+    SaveRGBToBMP("output_test.bmp", rgb_data, WIDTH, HEIGHT);
+
+    // 清理
+    delete[] nv12_data;
+    delete[] rgb_data;
 
     // Cleanup resources
     cleanup();
