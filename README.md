@@ -36,3 +36,17 @@ set ZLIB_DIR=C:\data\code\opengles_angle_shader\vcpkg\packages\zlib_x64-windows
 cmake ..
 cmake --build . --config Release
 ```
+
+## Usage
+
+The application supports the following command line arguments:
+
+```bash
+# List all available GPUs
+opengles-shader-perf.exe --list-gpus
+
+# Run the test on a specific GPU (e.g., GPU 1)
+opengles-shader-perf.exe --gpu 1
+```
+
+If no GPU is specified, the application will use GPU 0 by default.

@@ -1,12 +1,85 @@
 #include <ANGLE/GLES3/gl3.h>
 #include <EGL/egl.h>
+#include <EGL/eglext.h>
+#include <EGL/eglext_angle.h>
 #include <iostream>
 #include <vector>
 #include <chrono>
 #include <algorithm>
+#include <string>
 #include <windows.h>
 #include "shaders.h"
 #include "texture_utils.h"
+#include <dxgi1_2.h>
+#pragma comment(lib, "dxgi.lib")
+
+// 添加一些可能缺少的 EGL 常量定义
+#ifndef EGL_DEVICE_EXT
+#define EGL_DEVICE_EXT                     0x322C
+#endif
+
+#ifndef EGL_PLATFORM_DEVICE_EXT
+#define EGL_PLATFORM_DEVICE_EXT            0x313F
+#endif
+
+#ifndef EGL_DEVICE_NAME
+#define EGL_DEVICE_NAME                    0x3200
+#endif
+
+// 在文件开头添加这些常量定义
+#ifndef EGL_PLATFORM_ANGLE_ANGLE
+#define EGL_PLATFORM_ANGLE_ANGLE 0x3202
+#endif
+
+#ifndef EGL_PLATFORM_ANGLE_TYPE_ANGLE
+#define EGL_PLATFORM_ANGLE_TYPE_ANGLE 0x3203
+#endif
+
+#ifndef EGL_PLATFORM_ANGLE_TYPE_D3D11_ANGLE
+#define EGL_PLATFORM_ANGLE_TYPE_D3D11_ANGLE 0x3208
+#endif
+
+#ifndef EGL_PLATFORM_ANGLE_ENABLE_AUTOMATIC_TRIM_ANGLE
+#define EGL_PLATFORM_ANGLE_ENABLE_AUTOMATIC_TRIM_ANGLE 0x3201
+#endif
+
+#ifndef EGL_PLATFORM_ANGLE_DEVICE_ID_HIGH_ANGLE
+#define EGL_PLATFORM_ANGLE_DEVICE_ID_HIGH_ANGLE 0x3209
+#endif
+
+#ifndef EGL_PLATFORM_ANGLE_DEVICE_ID_LOW_ANGLE
+#define EGL_PLATFORM_ANGLE_DEVICE_ID_LOW_ANGLE 0x320A
+#endif
+
+// 在其他常量定义后添加
+#ifndef EGL_PLATFORM_ANGLE_DEVICE_TYPE_ANGLE
+#define EGL_PLATFORM_ANGLE_DEVICE_TYPE_ANGLE 0x320C
+#endif
+
+#ifndef EGL_PLATFORM_ANGLE_DEVICE_TYPE_HARDWARE_ANGLE
+#define EGL_PLATFORM_ANGLE_DEVICE_TYPE_HARDWARE_ANGLE 0x320D
+#endif
+
+// 在文件开头添加新的常量定义
+#ifndef EGL_PLATFORM_ANGLE_MAX_VERSION_MAJOR_ANGLE
+#define EGL_PLATFORM_ANGLE_MAX_VERSION_MAJOR_ANGLE 0x3204
+#endif
+
+#ifndef EGL_PLATFORM_ANGLE_MAX_VERSION_MINOR_ANGLE
+#define EGL_PLATFORM_ANGLE_MAX_VERSION_MINOR_ANGLE 0x3205
+#endif
+
+// GPU related structures and variables
+struct GPUInfo {
+    EGLDeviceEXT device;
+    std::string name;
+    std::string vendor;
+};
+
+std::vector<GPUInfo> gpuList;
+
+// Function declarations
+void queryGPUAdapters();
 
 // Performance test parameters
 const int TEST_ITERATIONS = 100;
@@ -31,8 +104,131 @@ struct PerfResult {
 };
 
 // Initialize EGL
-bool initEGL(HWND window) {
-    display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+bool initEGL(HWND window, int gpuIndex = 0) {
+    display = EGL_NO_DISPLAY;
+    
+    std::cout << "\n=== EGL Initialization Start ===" << std::endl;
+    std::cout << "Requested GPU Index: " << gpuIndex << std::endl;
+    
+    // 使用 EGLint 而不是 EGLAttrib
+    std::vector<EGLint> displayAttributes = {
+        // 指定使用 D3D11 后端
+        EGL_PLATFORM_ANGLE_TYPE_ANGLE,
+        static_cast<EGLint>(EGL_PLATFORM_ANGLE_TYPE_D3D11_ANGLE),
+        
+        // 使用 D3D11 Feature Level 11_0
+        EGL_PLATFORM_ANGLE_MAX_VERSION_MAJOR_ANGLE, 11,
+        EGL_PLATFORM_ANGLE_MAX_VERSION_MINOR_ANGLE, 0,
+        
+        // 请求硬件渲染
+        EGL_PLATFORM_ANGLE_DEVICE_TYPE_ANGLE,
+        static_cast<EGLint>(EGL_PLATFORM_ANGLE_DEVICE_TYPE_HARDWARE_ANGLE)
+    };
+
+    // 如果有选择特定的 GPU
+    if (gpuIndex >= 0 && gpuIndex < gpuList.size()) {
+        std::cout << "Attempting to select GPU: " << gpuList[gpuIndex].name << std::endl;
+        
+        IDXGIFactory1* factory = nullptr;
+        HRESULT hr = CreateDXGIFactory1(__uuidof(IDXGIFactory1), (void**)&factory);
+        std::cout << "CreateDXGIFactory1 result: 0x" << std::hex << hr << std::dec << std::endl;
+        
+        if (SUCCEEDED(hr)) {
+            IDXGIAdapter1* adapter = nullptr;
+            UINT adapterIndex = 0;
+            for (UINT i = 0; factory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND; ++i) {
+                if (adapterIndex == gpuIndex) {
+                    DXGI_ADAPTER_DESC1 desc;
+                    adapter->GetDesc1(&desc);
+                    
+                    // 添加 LUID 到属性列表
+                    displayAttributes.push_back(EGL_PLATFORM_ANGLE_DEVICE_ID_LOW_ANGLE);
+                    displayAttributes.push_back(static_cast<EGLint>(desc.AdapterLuid.LowPart));
+                    displayAttributes.push_back(EGL_PLATFORM_ANGLE_DEVICE_ID_HIGH_ANGLE);
+                    displayAttributes.push_back(static_cast<EGLint>(desc.AdapterLuid.HighPart));
+                    
+                    std::cout << "Found matching adapter:" << std::endl;
+                    std::cout << "  Name: " << gpuList[gpuIndex].name << std::endl;
+                    std::cout << "  LUID: High=0x" << std::hex << desc.AdapterLuid.HighPart 
+                             << ", Low=0x" << desc.AdapterLuid.LowPart << std::dec << std::endl;
+                    
+                    // 添加额外的 D3D11 特定属性
+                    displayAttributes.push_back(EGL_PLATFORM_ANGLE_ENABLE_AUTOMATIC_TRIM_ANGLE);
+                    displayAttributes.push_back(static_cast<EGLint>(EGL_TRUE));
+                    break;
+                }
+                adapter->Release();
+                adapterIndex++;
+            }
+            factory->Release();
+        }
+    }
+
+    // 添加终止标记
+    displayAttributes.push_back(EGL_NONE);
+
+    // 打印所有属性值
+    std::cout << "Display attributes:" << std::endl;
+    for (size_t i = 0; i < displayAttributes.size() - 1; i += 2) {
+        std::cout << "  0x" << std::hex << displayAttributes[i] 
+                 << " = 0x" << displayAttributes[i + 1] << std::dec << std::endl;
+    }
+
+    // 使用 eglGetPlatformDisplayEXT 创建显示
+    PFNEGLGETPLATFORMDISPLAYEXTPROC eglGetPlatformDisplayEXT =
+        (PFNEGLGETPLATFORMDISPLAYEXTPROC)eglGetProcAddress("eglGetPlatformDisplayEXT");
+    
+    std::cout << "eglGetPlatformDisplayEXT function pointer: " 
+              << (eglGetPlatformDisplayEXT ? "Valid" : "NULL") << std::endl;
+    
+    if (eglGetPlatformDisplayEXT) {
+        display = eglGetPlatformDisplayEXT(EGL_PLATFORM_ANGLE_ANGLE,
+                                         EGL_DEFAULT_DISPLAY,
+                                         displayAttributes.data());
+        
+        if (display == EGL_NO_DISPLAY) {
+            EGLint error = eglGetError();
+            std::cout << "eglGetPlatformDisplayEXT failed with error: 0x" 
+                      << std::hex << error << std::dec << std::endl;
+            
+            // 如果失败，尝试移除 LUID 相关属性
+            if (error == EGL_BAD_ATTRIBUTE) {
+                std::cout << "Trying without LUID..." << std::endl;
+                // 移除 LUID 相关属性
+                displayAttributes = {
+                    EGL_PLATFORM_ANGLE_TYPE_ANGLE,
+                    static_cast<EGLint>(EGL_PLATFORM_ANGLE_TYPE_D3D11_ANGLE),
+                    EGL_PLATFORM_ANGLE_MAX_VERSION_MAJOR_ANGLE, 11,
+                    EGL_PLATFORM_ANGLE_MAX_VERSION_MINOR_ANGLE, 0,
+                    EGL_PLATFORM_ANGLE_DEVICE_TYPE_ANGLE,
+                    static_cast<EGLint>(EGL_PLATFORM_ANGLE_DEVICE_TYPE_HARDWARE_ANGLE),
+                    EGL_PLATFORM_ANGLE_ENABLE_AUTOMATIC_TRIM_ANGLE,
+                    static_cast<EGLint>(EGL_TRUE),
+                    EGL_NONE
+                };
+
+                // 打印重新构建后的属性值
+                std::cout << "Display attributes (without LUID):" << std::endl;
+                for (size_t i = 0; i < displayAttributes.size() - 1; i += 2) {
+                    std::cout << "  0x" << std::hex << displayAttributes[i]
+                              << " = 0x" << displayAttributes[i + 1] << std::dec << std::endl;
+                }
+
+                display = eglGetPlatformDisplayEXT(EGL_PLATFORM_ANGLE_ANGLE,
+                                                 EGL_DEFAULT_DISPLAY,
+                                                 displayAttributes.data());
+            }
+        } else {
+            std::cout << "eglGetPlatformDisplayEXT succeeded" << std::endl;
+        }
+    }
+
+    // 如果失败，回退到默认方式
+    if (display == EGL_NO_DISPLAY) {
+        std::cout << "Falling back to eglGetDisplay..." << std::endl;
+        display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+    }
+    
     if (display == EGL_NO_DISPLAY) {
         std::cerr << "Failed to get EGL display" << std::endl;
         return false;
@@ -43,6 +239,15 @@ bool initEGL(HWND window) {
         std::cerr << "Failed to initialize EGL" << std::endl;
         return false;
     }
+    std::cout << "EGL Initialized: Version " << majorVersion << "." << minorVersion << std::endl;
+
+    // 获取并打印 EGL 客户端 APIs
+    const char* apis = eglQueryString(display, EGL_CLIENT_APIS);
+    std::cout << "Supported client APIs: " << (apis ? apis : "Unknown") << std::endl;
+
+    // 获取并打印 EGL 扩展
+    const char* extensions = eglQueryString(display, EGL_EXTENSIONS);
+    std::cout << "EGL Extensions: " << (extensions ? extensions : "None") << std::endl;
 
     const EGLint configAttribs[] = {
         EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
@@ -83,6 +288,7 @@ bool initEGL(HWND window) {
         return false;
     }
 
+    std::cout << "=== EGL Initialization Complete ===\n" << std::endl;
     return true;
 }
 
@@ -299,7 +505,93 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
     return DefWindowProc(hwnd, uMsg, wParam, lParam);
 }
 
-int main() {
+void queryGPUAdapters() {
+    // 尝试用 DXGI 来枚举 GPU
+    IDXGIFactory1* factory = nullptr;
+    std::vector<IDXGIAdapter1*> adapters;
+    
+    HRESULT hr = CreateDXGIFactory1(__uuidof(IDXGIFactory1), (void**)&factory);
+    if (SUCCEEDED(hr)) {
+        IDXGIAdapter1* adapter = nullptr;
+        for (UINT i = 0; factory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND; ++i) {
+            DXGI_ADAPTER_DESC1 desc;
+            adapter->GetDesc1(&desc);
+            
+            GPUInfo info;
+            info.device = EGL_NO_DEVICE_EXT;  // 我们不使用 EGL device
+            
+            // 将 WCHAR 转换为 string
+            char name[128];
+            wcstombs(name, desc.Description, sizeof(name));
+            info.name = name;
+            
+            // 使用 VendorID 来确定厂商
+            switch(desc.VendorId) {
+                case 0x10DE: info.vendor = "NVIDIA"; break;
+                case 0x1002: info.vendor = "AMD"; break;
+                case 0x8086: info.vendor = "Intel"; break;
+                default: info.vendor = "Unknown"; break;
+            }
+            
+            gpuList.push_back(info);
+            std::cout << "GPU " << gpuList.size()-1 << ": " << info.name 
+                     << " (" << info.vendor << ")" << std::endl;
+            
+            adapter->Release();
+        }
+        factory->Release();
+    }
+
+    // 如果没有找到任何设备，添加一个默认设备
+    if (gpuList.empty()) {
+        GPUInfo defaultGPU;
+        defaultGPU.device = EGL_NO_DEVICE_EXT;
+        defaultGPU.name = "Default GPU";
+        defaultGPU.vendor = "Default Vendor";
+        gpuList.push_back(defaultGPU);
+        std::cout << "Using default GPU" << std::endl;
+    }
+}
+
+int main(int argc, char* argv[]) {
+    // 在 main 函数开头添加
+    SetEnvironmentVariable("ANGLE_DEFAULT_PLATFORM", "d3d11");
+    SetEnvironmentVariable("ANGLE_D3D11_FORCE_DISCRETE_GPU", "1");
+    SetEnvironmentVariable("ANGLE_PLATFORM_ANGLE_DEVICE_TYPE", "hardware");
+    SetEnvironmentVariable("ANGLE_DEBUG_DISPLAY", "1");
+    SetEnvironmentVariable("ANGLE_DEBUG_LAYERS", "1");
+    
+    int selectedGPU = 0;
+    
+    // 处理命令行参数
+    for (int i = 1; i < argc; i++) {
+        std::string arg = argv[i];
+        if (arg == "--gpu" && i + 1 < argc) {
+            selectedGPU = std::atoi(argv[i + 1]);
+            i++;
+        } else if (arg == "--list-gpus") {
+            queryGPUAdapters();
+            return 0;
+        }
+    }
+
+    // 查询可用GPU
+    queryGPUAdapters();
+    
+    if (gpuList.empty()) {
+        std::cerr << "No GPU adapters found!" << std::endl;
+        return -1;
+    }
+    
+    if (selectedGPU >= gpuList.size()) {
+        std::cerr << "Selected GPU index " << selectedGPU << " is out of range. "
+                 << "Available GPUs: 0-" << (gpuList.size()-1) << std::endl;
+        return -1;
+    }
+    
+    std::cout << "Using GPU " << selectedGPU << ": " 
+              << gpuList[selectedGPU].name << std::endl;
+
     // Register window class
     WNDCLASSEX wc = {};
     wc.cbSize = sizeof(WNDCLASSEX);
@@ -330,7 +622,7 @@ int main() {
     ShowWindow(hwnd, SW_SHOW);
 
     // Initialize EGL and OpenGL ES
-    if (!initEGL(hwnd)) {
+    if (!initEGL(hwnd, selectedGPU)) {
         return -1;
     }
 

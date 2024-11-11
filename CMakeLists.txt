@@ -36,8 +36,9 @@ add_executable(shader_perf_test
 )
 
 target_link_libraries(shader_perf_test
-    libEGL
-    libGLESv2
+    ${ANGLE_DIR}/lib/libEGL.lib
+    ${ANGLE_DIR}/lib/libGLESv2.lib
+    dxgi.lib
 )
 
 add_custom_command(TARGET shader_perf_test POST_BUILD
