@@ -305,12 +305,7 @@ int main() {
     // Cleanup resources
     cleanup();
 
-    // Message loop
-    MSG msg = {};
-    while (GetMessage(&msg, nullptr, 0, 0)) {
-        TranslateMessage(&msg);
-        DispatchMessage(&msg);
-    }
-
+    // Close the window and exit
+    DestroyWindow(hwnd);
     return 0;
 } 
