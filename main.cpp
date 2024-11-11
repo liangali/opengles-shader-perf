@@ -20,6 +20,8 @@ GLuint yTexture, uvTexture;
 EGLDisplay display;
 EGLSurface surface;
 EGLContext context;
+GLuint fbo;
+GLuint outputTexture;
 
 // Performance test results
 struct PerfResult {
@@ -134,6 +136,34 @@ bool initShaders() {
     return true;
 }
 
+
+void initFramebuffer() {
+    // Create and setup FBO
+    glGenFramebuffers(1, &fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+
+    // Create color attachment texture
+    glGenTextures(1, &outputTexture);
+    glBindTexture(GL_TEXTURE_2D, outputTexture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, WIDTH, HEIGHT, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);  // Use RGBA format
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);  // Use NEAREST filtering
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    
+    // Attach texture to FBO
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, outputTexture, 0);
+
+    // Check if FBO is complete
+    GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    if (status != GL_FRAMEBUFFER_COMPLETE) {
+        std::cerr << "Framebuffer is not complete! Status: " << status << std::endl;
+    } else {
+        std::cout << "Framebuffer is complete!" << std::endl;
+    }
+
+    // Reset binding
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
 // Initialize vertex data and textures
 void initGeometryAndTextures() {
     float vertices[] = {
@@ -166,7 +196,8 @@ void initGeometryAndTextures() {
     glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
     glEnableVertexAttribArray(1);
 
-    // Create and initialize textures
+    // 删除这部分，因为我们后面会重新创建纹理
+    /*
     std::vector<unsigned char> yData(WIDTH * HEIGHT, 128);
     std::vector<unsigned char> uvData(WIDTH * HEIGHT / 2, 128);
 
@@ -181,6 +212,9 @@ void initGeometryAndTextures() {
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RG8, WIDTH/2, HEIGHT/2, 0, GL_RG, GL_UNSIGNED_BYTE, uvData.data());
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    */
+
+    initFramebuffer();
 }
 
 // Run performance test
@@ -193,6 +227,13 @@ PerfResult runPerfTest() {
     // Set texture units
     glUniform1i(glGetUniformLocation(shaderProgram, "yTexture"), 0);
     glUniform1i(glGetUniformLocation(shaderProgram, "uvTexture"), 1);
+
+    // Bind FBO
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glViewport(0, 0, WIDTH, HEIGHT);
+
+    // 添加这行
+    glClear(GL_COLOR_BUFFER_BIT);
 
     for (int i = 0; i < TEST_ITERATIONS; i++) {
         auto start = std::chrono::high_resolution_clock::now();
@@ -215,6 +256,9 @@ PerfResult runPerfTest() {
         times.push_back(time);
     }
 
+    // Reset FBO binding
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
     // Calculate statistics
     double avgTime = 0;
     for (double time : times) {
@@ -230,6 +274,8 @@ PerfResult runPerfTest() {
 
 // Cleanup resources
 void cleanup() {
+    glDeleteFramebuffers(1, &fbo);
+    glDeleteTextures(1, &outputTexture);
     glDeleteVertexArrays(1, &VAO);
     glDeleteBuffers(1, &VBO);
     glDeleteBuffers(1, &EBO);
@@ -314,6 +360,9 @@ int main() {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
+    // Initialize FBO
+    initFramebuffer();
+
     // Run performance test
     PerfResult result = runPerfTest();
 
@@ -323,15 +372,83 @@ int main() {
     std::cout << "Minimum Time: " << result.minTime << " ms" << std::endl;
     std::cout << "Maximum Time: " << result.maxTime << " ms" << std::endl;
 
-    // 读取RGB结果
+    // Read RGB result
     uint8_t* rgb_data = new uint8_t[WIDTH * HEIGHT * 3];
-    // 从GPU读取数据到rgb_data
-    glReadPixels(0, 0, WIDTH, HEIGHT, GL_RGB, GL_UNSIGNED_BYTE, rgb_data);
+    
+    // Bind FBO and perform rendering
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glViewport(0, 0, WIDTH, HEIGHT);
+    
+    // Clear buffer to red (for debugging)
+    glClearColor(1.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    
+    // Execute rendering
+    glUseProgram(shaderProgram);
+    
+    // Set texture uniform
+    GLint yLoc = glGetUniformLocation(shaderProgram, "yTexture");
+    GLint uvLoc = glGetUniformLocation(shaderProgram, "uvTexture");
+    glUniform1i(yLoc, 0);  // texture unit 0
+    glUniform1i(uvLoc, 1); // texture unit 1
+    
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, yTexture);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, uvTexture);
+    
+    glBindVertexArray(VAO);
+    glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+    
+    // Ensure rendering is complete
+    glFinish();
 
-    // 保存为BMP文件
+    // Add error checking
+    GLenum err = glGetError();
+    if (err != GL_NO_ERROR) {
+        std::cerr << "OpenGL error before reading pixels: 0x" << std::hex << err << std::endl;
+    }
+    
+    // Read pixel data
+    uint8_t* rgba_data = new uint8_t[WIDTH * HEIGHT * 4];  // Using RGBA format
+    glReadPixels(0, 0, WIDTH, HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE, rgba_data);
+    
+    // Check for errors again
+    err = glGetError();
+    if (err != GL_NO_ERROR) {
+        std::cerr << "OpenGL error after reading pixels: 0x" << std::hex << err << std::endl;
+    }
+
+    // Convert RGBA to RGB
+    for (int i = 0; i < WIDTH * HEIGHT; i++) {
+        rgb_data[i * 3] = rgba_data[i * 4];      // R
+        rgb_data[i * 3 + 1] = rgba_data[i * 4 + 1];  // G
+        rgb_data[i * 3 + 2] = rgba_data[i * 4 + 2];  // B
+    }
+
+    delete[] rgba_data;  // Clean up RGBA data
+
+    // Check if all pixel values are zero
+    bool allZero = true;
+    for (int i = 0; i < WIDTH * HEIGHT * 3; i++) {
+        if (rgb_data[i] != 0) {
+            allZero = false;
+            break;
+        }
+    }
+    if (allZero) {
+        std::cerr << "Warning: All pixel values are zero!" << std::endl;
+    } else {
+        std::cout << "Successfully read non-zero pixel values." << std::endl;
+    }
+
+    // Save as BMP file
     SaveRGBToBMP("output_test.bmp", rgb_data, WIDTH, HEIGHT);
 
-    // 清理
+    // Reset FBO binding
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    // Clean up
     delete[] nv12_data;
     delete[] rgb_data;
 

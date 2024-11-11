@@ -27,5 +27,8 @@ void main() {
     rgb.g = y - 0.344 * uv.x - 0.714 * uv.y;
     rgb.b = y + 1.770 * uv.x;
     
+    // Ensure values are in valid range
+    rgb = clamp(rgb, 0.0, 1.0);
+    
     FragColor = vec4(rgb, 1.0);
 })"; 
