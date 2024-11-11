@@ -13,6 +13,9 @@
 #include <dxgi1_2.h>
 #pragma comment(lib, "dxgi.lib")
 
+// 添加 verbose 和 help 标志
+bool verbose = false;
+
 // 添加一些可能缺少的 EGL 常量定义
 #ifndef EGL_DEVICE_EXT
 #define EGL_DEVICE_EXT                     0x322C
@@ -105,10 +108,12 @@ struct PerfResult {
 
 // Initialize EGL
 bool initEGL(HWND window, int gpuIndex = 0) {
+    if (verbose) {
+        std::cout << "\n=== EGL Initialization Start ===" << std::endl;
+        std::cout << "Requested GPU Index: " << gpuIndex << std::endl;
+    }
+
     display = EGL_NO_DISPLAY;
-    
-    std::cout << "\n=== EGL Initialization Start ===" << std::endl;
-    std::cout << "Requested GPU Index: " << gpuIndex << std::endl;
     
     // 使用 EGLint 而不是 EGLAttrib
     std::vector<EGLint> displayAttributes = {
@@ -168,18 +173,22 @@ bool initEGL(HWND window, int gpuIndex = 0) {
     displayAttributes.push_back(EGL_NONE);
 
     // 打印所有属性值
-    std::cout << "Display attributes:" << std::endl;
-    for (size_t i = 0; i < displayAttributes.size() - 1; i += 2) {
-        std::cout << "  0x" << std::hex << displayAttributes[i] 
-                 << " = 0x" << displayAttributes[i + 1] << std::dec << std::endl;
+    if (verbose) {
+        std::cout << "Display attributes:" << std::endl;
+        for (size_t i = 0; i < displayAttributes.size() - 1; i += 2) {
+            std::cout << "  0x" << std::hex << displayAttributes[i] 
+                    << " = 0x" << displayAttributes[i + 1] << std::dec << std::endl;
+        }
     }
 
     // 使用 eglGetPlatformDisplayEXT 创建显示
     PFNEGLGETPLATFORMDISPLAYEXTPROC eglGetPlatformDisplayEXT =
         (PFNEGLGETPLATFORMDISPLAYEXTPROC)eglGetProcAddress("eglGetPlatformDisplayEXT");
     
-    std::cout << "eglGetPlatformDisplayEXT function pointer: " 
-              << (eglGetPlatformDisplayEXT ? "Valid" : "NULL") << std::endl;
+    if (verbose) {
+        std::cout << "eglGetPlatformDisplayEXT function pointer: " 
+                  << (eglGetPlatformDisplayEXT ? "Valid" : "NULL") << std::endl;
+    }
     
     if (eglGetPlatformDisplayEXT) {
         display = eglGetPlatformDisplayEXT(EGL_PLATFORM_ANGLE_ANGLE,
@@ -188,12 +197,16 @@ bool initEGL(HWND window, int gpuIndex = 0) {
         
         if (display == EGL_NO_DISPLAY) {
             EGLint error = eglGetError();
-            std::cout << "eglGetPlatformDisplayEXT failed with error: 0x" 
-                      << std::hex << error << std::dec << std::endl;
+            if (verbose) {
+                std::cout << "eglGetPlatformDisplayEXT failed with error: 0x" 
+                          << std::hex << error << std::dec << std::endl;
+            }
             
             // 如果失败，尝试移除 LUID 相关属性
             if (error == EGL_BAD_ATTRIBUTE) {
-                std::cout << "Trying without LUID..." << std::endl;
+                if (verbose) {
+                    std::cout << "Trying without LUID..." << std::endl;
+                }
                 // 移除 LUID 相关属性
                 displayAttributes = {
                     EGL_PLATFORM_ANGLE_TYPE_ANGLE,
@@ -207,11 +220,13 @@ bool initEGL(HWND window, int gpuIndex = 0) {
                     EGL_NONE
                 };
 
-                // 打印重新构建后的属性值
-                std::cout << "Display attributes (without LUID):" << std::endl;
-                for (size_t i = 0; i < displayAttributes.size() - 1; i += 2) {
-                    std::cout << "  0x" << std::hex << displayAttributes[i]
-                              << " = 0x" << displayAttributes[i + 1] << std::dec << std::endl;
+                if (verbose) {
+                    // 打印重新构建后的属性值
+                    std::cout << "Display attributes (without LUID):" << std::endl;
+                    for (size_t i = 0; i < displayAttributes.size() - 1; i += 2) {
+                        std::cout << "  0x" << std::hex << displayAttributes[i]
+                                << " = 0x" << displayAttributes[i + 1] << std::dec << std::endl;
+                    }
                 }
 
                 display = eglGetPlatformDisplayEXT(EGL_PLATFORM_ANGLE_ANGLE,
@@ -219,13 +234,17 @@ bool initEGL(HWND window, int gpuIndex = 0) {
                                                  displayAttributes.data());
             }
         } else {
-            std::cout << "eglGetPlatformDisplayEXT succeeded" << std::endl;
+            if (verbose) {
+                std::cout << "eglGetPlatformDisplayEXT succeeded" << std::endl;
+            }
         }
     }
 
     // 如果失败，回退到默认方式
     if (display == EGL_NO_DISPLAY) {
-        std::cout << "Falling back to eglGetDisplay..." << std::endl;
+        if (verbose) {
+            std::cout << "Falling back to eglGetDisplay..." << std::endl;
+        }
         display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
     }
     
@@ -239,15 +258,16 @@ bool initEGL(HWND window, int gpuIndex = 0) {
         std::cerr << "Failed to initialize EGL" << std::endl;
         return false;
     }
-    std::cout << "EGL Initialized: Version " << majorVersion << "." << minorVersion << std::endl;
+    if (verbose) {
+        std::cout << "EGL Initialized: Version " << majorVersion << "." << minorVersion << std::endl;
+        // 获取并打印 EGL 客户端 APIs
+        const char* apis = eglQueryString(display, EGL_CLIENT_APIS);
+        std::cout << "Supported client APIs: " << (apis ? apis : "Unknown") << std::endl;
 
-    // 获取并打印 EGL 客户端 APIs
-    const char* apis = eglQueryString(display, EGL_CLIENT_APIS);
-    std::cout << "Supported client APIs: " << (apis ? apis : "Unknown") << std::endl;
-
-    // 获取并打印 EGL 扩展
-    const char* extensions = eglQueryString(display, EGL_EXTENSIONS);
-    std::cout << "EGL Extensions: " << (extensions ? extensions : "None") << std::endl;
+        // 获取并打印 EGL 扩展
+        const char* extensions = eglQueryString(display, EGL_EXTENSIONS);
+        std::cout << "EGL Extensions: " << (extensions ? extensions : "None") << std::endl;
+    }
 
     const EGLint configAttribs[] = {
         EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
@@ -288,7 +308,10 @@ bool initEGL(HWND window, int gpuIndex = 0) {
         return false;
     }
 
-    std::cout << "=== EGL Initialization Complete ===\n" << std::endl;
+    if(verbose) {
+        std::cout << "=== EGL Initialization Complete ===\n" << std::endl;
+    }
+
     return true;
 }
 
@@ -562,22 +585,39 @@ int main(int argc, char* argv[]) {
     SetEnvironmentVariable("ANGLE_DEBUG_LAYERS", "1");
     
     int selectedGPU = 0;
-    
+
     // 处理命令行参数
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
         if (arg == "--gpu" && i + 1 < argc) {
             selectedGPU = std::atoi(argv[i + 1]);
             i++;
-        } else if (arg == "--list-gpus") {
+        }
+        else if (arg == "--list-gpus") {
             queryGPUAdapters();
+            return 0;
+        }
+        else if (arg == "--verbose") {
+            verbose = true;
+        }
+        else if (arg == "--help") {
+            std::cout << "Usage: shader_perf_test.exe [options]\n"
+                      << "Options:\n"
+                      << "  --gpu <index>    Select GPU adapter by index.\n"
+                      << "  --verbose        Enable verbose debug logging.\n"
+                      << "  --help           Show this help message.\n";
             return 0;
         }
     }
 
     // 查询可用GPU
     queryGPUAdapters();
-    
+
+    // 使用 verbose 控制日志打印
+    if (verbose) {
+        std::cout << "Using GPU " << selectedGPU << ": " << gpuList[selectedGPU].name << std::endl;
+    }
+
     if (gpuList.empty()) {
         std::cerr << "No GPU adapters found!" << std::endl;
         return -1;

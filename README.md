@@ -41,7 +41,14 @@ cmake --build . --config Release
 
 The application supports the following command line arguments:
 
+### Command Line Options
+
+- `--gpu <index>`: Select GPU adapter by index. If not specified, the application will use GPU 0 by default.
+- `--verbose`: Enable verbose debug logging during EGL initialization and other critical sections. Useful for debugging GPU selection and initialization issues.
+- `--help`: Show detailed command line usage information.
+
 ```bash
+
 # List all available GPUs
 opengles-shader-perf.exe --list-gpus
 
